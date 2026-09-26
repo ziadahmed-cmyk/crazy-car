@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>لعبة تفادي السيارات للموبايل</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; /* منع السكرول والزوم الافتراضي للموبايل */
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            font-family: 'Tahoma', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: #fff;
+            overflow: hidden;
+        }
+        h1 {
+            margin: 5px 0;
+            font-size: 1.3rem;
+            color: #ffcc00;
+            text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            max-width: 400px;
+            height: 80vh;
+            max-height: 700px;
+            background: #333;
+            border: 2px solid #555;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: #444;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 1.2rem;
+            font-weight: bold;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 10;
+        }
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            display: none;
+        }
+        #game-over-screen h2 {
+            color: #ff3333;
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+        }
+        .btn {
+            background: #ffcc00;
+            color: #111;
+            border: none;
+            padding: 12px 35px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 25px;
+            cursor: pointer;
+            margin-top: 15px;
+            box-shadow: 0 5px 15px rgba(255, 204, 0, 0.4);
+        }
+        .controls-hint {
+            margin-top: 10px;
+            font-size: 0.85rem;
+            color: #aaa;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>لعبة مراوغة السيارات</h1>
+    
+    <div id="game-container">
+        <div class="ui-layer">
+            <span id="score-display">النقاط: 0</span>
+            <span id="high-score-display">الأعلى: 0</span>
+        </div>
+
+        <div id="game-over-screen">
+            <h2>انتهت اللعبة!</h2>
+            <p id="final-score" style="font-size: 1.3rem; margin: 5px 0;">نقاطك: 0</p>
+            <button class="btn" onclick="restartGame()">إلعب مجدداً</button>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div class="controls-hint">
+        💡 المس الشاشة وحرك إصبعك يميناً ويساراً لتحريك السيارة.
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // ضبط أبعاد الكانفاس لتتطابق مع حجم الـ CSS بدقة عالية
+        function resizeCanvas() {
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // إعادة تعيين مركز اللاعب بعد تحديد المقاسات
+        let player = {
+            x: canvas.width / 2 - 25,
+            y: canvas.height - 120,
+            width: 45,
+            height: 75,
+            color: '#e74c3c'
+        };
+
+        const scoreDisplay = document.getElementById('score-display');
+        const highScoreDisplay = document.getElementById('high-score-display');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const finalScoreText = document.getElementById('final-score');
+
+        let score = 0;
+        let highScore = localStorage.getItem('carTouchHighScore') || 0;
+        highScoreDisplay.innerText = `الأعلى: ${highScore}`;
+
+        let gameRunning = true;
+        let roadSpeed = 5;
+        let roadLineOffset = 0;
+
+        let enemies = [];
+        let spawnTimer = 0;
+        let spawnInterval = 65;
+
+        // متغيرات التحكم بالتاتش السلس
+        let isTouching = false;
+        let targetX = player.x;
+
+        // استقبال حركات اللمس على الشاشة
+        canvas.addEventListener('touchstart', (e) => {
+            isTouching = true;
+            updateTouchPosition(e);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (isTouching) {
+                updateTouchPosition(e);
+            }
+        });
+
+        canvas.addEventListener('touchend', () => {
+            isTouching = false;
+        });
+
+        // دعم الماوس أيضاً للاختبار على الكمبيوتر
+        canvas.addEventListener('mousedown', (e) => {
+            isTouching = true;
+            updateMousePosition(e);
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            if (isTouching) {
+                updateMousePosition(e);
+            }
+        });
+        window.addEventListener('mouseup', () => {
+            isTouching = false;
+        });
+
+        function updateTouchPosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            // جعل السيارة تتحرك بحيث يكون إصبعك في منتصفها أفقياً
+            targetX = touchX - (player.width / 2);
+        }
+
+        function updateMousePosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            targetX = mouseX - (player.width / 2);
+        }
+
+        // رسم السيارة بتصميم احترافي
+        function drawCar(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x + 5, y + 10, width - 10, height - 20);
+            ctx.fillRect(x, y + 15, width, height - 30);
+            
+            // زجاج السيارة
+            ctx.fillStyle = '#111';
+            ctx.fillRect(x + 7, y + 18, width - 14, 15);
+            ctx.fillRect(x + 7, y + height - 28, width - 14, 10);
+
+            // الإطارات
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 3, y + 12, 4, 14);
+            ctx.fillRect(x + width - 1, y + 12, 4, 14);
+            ctx.fillRect(x - 3, y + height - 26, 4, 14);
+            ctx.fillRect(x + width - 1, y + height - 26, 4, 14);
+
+            // الأضواء
+            ctx.fillStyle = '#ffeb3b';
+            ctx.fillRect(x + 3, y + 2, 5, 4);
+            ctx.fillRect(x + width - 8, y + 2, 5, 4);
+        }
+
+        // رسم الطريق
+        function drawRoad() {
+            ctx.fillStyle = '#444';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // الأرصفة الجانبية
+            ctx.fillStyle = '#7f8c8d';
+            ctx.fillRect(0, 0, 15, canvas.height);
+            ctx.fillRect(canvas.width - 15, 0, 15, canvas.height);
+
+            // خطوط جانبية بيضاء
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(18, 0); ctx.lineTo(18, canvas.height);
+            ctx.moveTo(canvas.width - 18, 0); ctx.lineTo(canvas.width - 18, canvas.height);
+            ctx.stroke();
+
+            // الخطوط المتقطعة في المنتصف المتحركة
+            ctx.strokeStyle = '#f1c40f';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([25, 25]);
+            ctx.lineDashOffset = -roadLineOffset;
+
+            let laneWidth = (canvas.width - 40) / 3;
+            ctx.beginPath();
+            ctx.moveTo(20 + laneWidth, 0);
+            ctx.lineTo(20 + laneWidth, canvas.height);
+            ctx.moveTo(20 + (laneWidth * 2), 0);
+            ctx.lineTo(20 + (laneWidth * 2), canvas.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // إنشاء سيارة عدو عشوائية
+        function spawnEnemy() {
+            let laneWidth = (canvas.width - 40) / 3;
+            let lanes = [
+                25 + (laneWidth * 0) + (laneWidth / 2) - 22,
+                25 + (laneWidth * 1) + (laneWidth / 2) - 22,
+                25 + (laneWidth * 2) + (laneWidth / 2) - 22
+            ];
+            const randomLane = lanes[Math.floor(Math.random() * lanes.length)];
+            const colors = ['#3498db', '#2ecc71', '#9b59b6', '#e67e22', '#1abc9c'];
+            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
+            enemies.push({
+                x: randomLane,
+                y: -90,
+                width: 45,
+                height: 75,
+                speed: roadSpeed + 1.5 + Math.random() * 1,
+                color: randomColor
+            });
+        }
+
+        function checkCollision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        function update() {
+            if (!gameRunning) return;
+
+            roadLineOffset += roadSpeed;
+            if (roadLineOffset > 50) roadLineOffset = 0;
+
+            // تحريك السيارة بسلاسة نحو مكان الإصبع (Target X) مع تقييدها داخل حدود الطريق
+            if (isTouching) {
+                let minX = 20;
+                let maxX = canvas.width - player.width - 20;
+                // حركة سلسة (Lerp) للوصول لمكان الإصبع
+                player.x += (targetX - player.x) * 0.2;
+                if (player.x < minX) player.x = minX;
+                if (player.x > maxX) player.x = maxX;
+            }
+
+            spawnTimer++;
+            if (spawnTimer > spawnInterval) {
+                spawnEnemy();
+                spawnTimer = 0;
+                if (spawnInterval > 28) spawnInterval -= 1;
+            }
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                enemies[i].y += enemies[i].speed;
+
+                if (checkCollision(player, enemies[i])) {
+                    gameRunning = false;
+                    gameOverScreen.style.display = 'flex';
+                    finalScoreText.innerText = `نقاطك: ${Math.floor(score)}`;
+                    
+                    if (score > highScore) {
+                        highScore = Math.floor(score);
+                        localStorage.setItem('carTouchHighScore', highScore);
+                        highScoreDisplay.innerText = `الأعلى: ${highScore}`;
+                    }
+                }
+
+                if (enemies[i].y > canvas.height) {
+                    enemies.splice(i, 1);
+                    score += 10;
+                    scoreDisplay.innerText = `النقاط: ${Math.floor(score)}`;
+                    roadSpeed = 5 + Math.floor(score / 120);
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawRoad();
+
+            for (let enemy of enemies) {
+                drawCar(enemy.x, enemy.y, enemy.width, enemy.height, enemy.color);
+            }
+
+            drawCar(player.x, player.y, player.width, player.height, player.color);
+        }
+
+        function loop() {
+            update();
+            draw();
+            if (gameRunning) {
+                requestAnimationFrame(loop);
+            }
+        }
+
+        function restartGame() {
+            score = 0;
+            scoreDisplay.innerText = `النقاط: 0`;
+            roadSpeed = 5;
+            spawnInterval = 65;
+            enemies = [];
+            player.x = canvas.width / 2 - 25;
+            targetX = player.x;
+            gameRunning = true;
+            gameOverScreen.style.display = 'none';
+            loop();
+        }
+
+        loop();
+    </script>
+</body>
+</html>
